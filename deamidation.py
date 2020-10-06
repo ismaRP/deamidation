@@ -32,26 +32,29 @@ class MQcolnames(object):
                 ipdb.set_trace()
                 return False
 
-def add_num_N_Q_cols(df):
+def add_num_MNQ_cols(df):
     """
-    add 2 columns with Integers to DataFrame, count the number of N and Q from Sequence column
+    add 3 columns with Integers to DataFrame, count the number of M, N and Q from Sequence column
     :param df: DataFrame
     :return: DataFrame
     """
-    aaseq2count_N_Q_dict = {}
+    aaseq2count_MNQ_dict = {}
     aaseq_arr = df["Sequence"].unique()
     for aaseq in aaseq_arr:
-        aaseq2count_N_Q_dict[aaseq] = count_N_Q(aaseq)
-    df['num_N'] = df["Sequence"].apply(lambda aaseq: aaseq2count_N_Q_dict[aaseq][0], 1)
-    df['num_Q'] = df["Sequence"].apply(lambda aaseq: aaseq2count_N_Q_dict[aaseq][1], 1)
+        aaseq2count_MNQ_dict[aaseq] = count_MNQ(aaseq)
+    df['num_M'] = df["Sequence"].apply(lambda aaseq: aaseq2count_MNQ_dict[aaseq][0], 1)
+    df['num_N'] = df["Sequence"].apply(lambda aaseq: aaseq2count_MNQ_dict[aaseq][1], 1)
+    df['num_Q'] = df["Sequence"].apply(lambda aaseq: aaseq2count_MNQ_dict[aaseq][2], 1)
+
     return df
 
-def count_N_Q(aaseq):
+def count_MNQ(aaseq):
+    M_count = aaseq.count('M')
     N_count = aaseq.count('N')
     Q_count = aaseq.count('Q')
-    return N_count, Q_count
+    return M_count, N_count, Q_count
 
-def add_num_N2D_Q2E_ratios(df, mqc=None):
+def add_num_MNQ_ratios(df, mqc=None):
     """
     add 4 columns to DataFrame: Int, Int, Float, Float
     number of N modified to D and analogous Q to E,
@@ -64,22 +67,24 @@ def add_num_N2D_Q2E_ratios(df, mqc=None):
     if not mqc:
         mqc = MQcolnames(df)
     colname = mqc.check_if_colname_or_similar_exists("Modified sequence")
-    aaseq2count_N2D_Q2E_dict = {}
+    aaseq2count_MNQmod_dict = {}
     aaseq_mod_arr = df[colname].unique()
     for aaseq in aaseq_mod_arr:
-        aaseq2count_N2D_Q2E_dict[aaseq] = count_N2D_Q2E(aaseq)
-    df['num_N2D'] = df[colname].apply(lambda aaseq: aaseq2count_N2D_Q2E_dict[aaseq][0], 1)
-    df['num_Q2E'] = df[colname].apply(lambda aaseq: aaseq2count_N2D_Q2E_dict[aaseq][1], 1)
+        aaseq2count_MNQmod_dict[aaseq] = count_MNQmod(aaseq)
+    df['num_OxM'] = df[colname].apply(lambda aaseq: aaseq2count_MNQmod_dict[aaseq][0], 1)
+    df['num_N2D'] = df[colname].apply(lambda aaseq: aaseq2count_MNQmod_dict[aaseq][1], 1)
+    df['num_Q2E'] = df[colname].apply(lambda aaseq: aaseq2count_MNQmod_dict[aaseq][2], 1)
     # sanity check: "Deamidation (NQ)" == ( "num_N2D" + "num_Q2E" )
     assert (df["Deamidation (NQ)"] == ( df["num_N2D"] + df["num_Q2E"] )).all()
 
+    df['ratio_OxM'] = df['num_OxM']*1.0 / df['num_M']
     df['ratio_N2D'] = df['num_N2D']*1.0 / df['num_N']
     df['ratio_Q2E'] = df['num_Q2E']*1.0 / df['num_Q']
     return df
 
-def count_N2D_Q2E(aaseq, char2find=r"\(de\)"):
+def count_MNQmod(aaseq, char2find=r"\(de\)|\(ox\)"):
     """
-    count the number of N modified to D and Q modified to E
+    count the number of oxidized M, N modified to D and Q modified to E
     e.g.
     aaseq = r"_AAIAAFNAQ(de)N(de)N(de)GSNFQIEEISR_"
     count_N2D_Q2E(aaseq)
@@ -87,10 +92,11 @@ def count_N2D_Q2E(aaseq, char2find=r"\(de\)"):
     :param char2find: String
     :return: Tuple(Int, Int)
     """
-    N_Q_list = [aaseq[i.start() - 1] for i in re.finditer(char2find, aaseq)]
-    N2D_count = N_Q_list.count("N")
-    Q2E_count = N_Q_list.count("Q")
-    return N2D_count, Q2E_count
+    MNQ_list = [aaseq[i.start() - 1] for i in re.finditer(char2find, aaseq)]
+    OxM_count = MNQ_list.count("M")
+    N2D_count = MNQ_list.count("N")
+    Q2E_count = MNQ_list.count("Q")
+    return OxM_count, N2D_count, Q2E_count
 
 def percent_deamidation(group, abundance_colname="Intensity"):
     """
@@ -107,6 +113,7 @@ def percent_deamidation(group, abundance_colname="Intensity"):
     :param abundance_colname: String
     :return: DataFrame(grouped
     """
+    group["perc_OxM"] = 100.0 * sum(group["ratio_OxM"] * group[abundance_colname]) / sum(group[abundance_colname])
     group["perc_DeamN"] = 100.0 * sum(group["ratio_N2D"] * group[abundance_colname]) / sum(group[abundance_colname])
     group["perc_DeamQ"] = 100.0 * sum(group["ratio_Q2E"] * group[abundance_colname]) / sum(group[abundance_colname])
     return group
@@ -121,9 +128,9 @@ def avg_PSM2Pep(df, colname_RawFile, colname_LeadingRazorProtein, mean_or_median
     :return: DataFrame (with reduced shape)
     """
     # subset columns needed
-    dfx = df[[colname_RawFile, colname_LeadingRazorProtein, "Sequence", "Charge", "perc_DeamN", "perc_DeamQ"]].drop_duplicates()
+    dfx = df[[colname_RawFile, colname_LeadingRazorProtein, "Sequence", "Charge", "perc_OxM", "perc_DeamN", "perc_DeamQ"]].drop_duplicates()
     # average PSMs to Peptides (merge charge states of same sequence)
-    dfx = dfx.groupby([colname_RawFile, colname_LeadingRazorProtein, "Sequence"])[["perc_DeamN", "perc_DeamQ"]].agg(mean_or_median)
+    dfx = dfx.groupby([colname_RawFile, colname_LeadingRazorProtein, "Sequence"])[["perc_OxM", "perc_DeamN", "perc_DeamQ"]].agg(mean_or_median)
     dfx = dfx.reset_index()
     return dfx
 
@@ -137,7 +144,7 @@ def avg_Pep2Prot(df, colname_RawFile, colname_LeadingRazorProtein, mean_or_media
     :return: DataFrame (with reduced shape)
     """
     # averge Peptides to Proteins (merge sequences of same protein)
-    dfx = df.groupby([colname_RawFile, colname_LeadingRazorProtein])[["perc_DeamN", "perc_DeamQ"]].agg(mean_or_median)
+    dfx = df.groupby([colname_RawFile, colname_LeadingRazorProtein])[["perc_OxM", "perc_DeamN", "perc_DeamQ"]].agg(mean_or_median)
     dfx = dfx.reset_index()
     return dfx
 
@@ -164,8 +171,8 @@ def bootstrap_RFgrouped_avg_Pep2Prot_avg_Prot(df, colname_LeadingRazorProtein, m
     :param mean_or_median: String(Flag to select mean/average or median)
     :return: Series
     """
-    dft = df.groupby(colname_LeadingRazorProtein)[["perc_DeamN", "perc_DeamQ"]].agg(mean_or_median)
-    return dft[["perc_DeamN", "perc_DeamQ"]].agg(mean_or_median)
+    dft = df.groupby(colname_LeadingRazorProtein)[["perc_OxM", "perc_DeamN", "perc_DeamQ"]].agg(mean_or_median)
+    return dft[["perc_OxM", "perc_DeamN", "perc_DeamQ"]].agg(mean_or_median)
 
 def bootstrap_RFgrouped_avg_Pep(df, mean_or_median="mean"):
     """
@@ -176,7 +183,7 @@ def bootstrap_RFgrouped_avg_Pep(df, mean_or_median="mean"):
     :param mean_or_median: String(Flag to select mean/average or median)
     :return: Series
     """
-    return df[["perc_DeamN", "perc_DeamQ"]].agg(mean_or_median)
+    return df[["perc_OxM", "perc_DeamN", "perc_DeamQ"]].agg(mean_or_median)
 
 def run(fn_evidence, abundance_colname, ci, sampling, num_bootstraps, output_dir, colname_proteins, protein_bootstraps=False):
     """
@@ -203,8 +210,8 @@ def run(fn_evidence, abundance_colname, ci, sampling, num_bootstraps, output_dir
     colname_proteins = mqc.check_if_colname_or_similar_exists(colname_proteins)
     colname_RawFile = mqc.check_if_colname_or_similar_exists("Raw file")
     print("Calculating N2D and Q2E ratios")
-    df = add_num_N_Q_cols(df)
-    df = add_num_N2D_Q2E_ratios(df)
+    df = add_num_MNQ_cols(df)
+    df = add_num_MNQ_ratios(df)
     ## calc deamidation per RawFile, Sequence and Charge
     df = df.groupby(by=[colname_RawFile, "Sequence", "Charge"], axis=0).apply(percent_deamidation, abundance_colname)
 
@@ -287,6 +294,7 @@ def deam_per_RawFile_returnBootstrappedVals(df, mqc, colname_proteins="Leading r
         df_temp = pd.DataFrame()
         # df_temp[groupby_] = groupby_
         group_index = group.index.tolist()
+        group_m = []
         group_n = []
         group_q = []
         for random_index in yield_random_combination_with_replacement(group_index, num_bootstraps):
@@ -303,24 +311,31 @@ def deam_per_RawFile_returnBootstrappedVals(df, mqc, colname_proteins="Leading r
             else:
                 print("Method doesn't exist")
                 raise StopIteration
+            group_m.append(ser["perc_OxM"])
             group_n.append(ser["perc_DeamN"])
             group_q.append(ser["perc_DeamQ"])
+        group_m = np.array(group_m)
         group_n = np.array(group_n)
         group_q = np.array(group_q)
+        group_m = group_m[np.isfinite(group_m)]
         group_n = group_n[np.isfinite(group_n)]
         group_q = group_q[np.isfinite(group_q)]
+        if group_m.size == 0:
+            group_m = np.nan
         if group_n.size == 0:
             group_n = np.nan
         if group_q.size == 0:
             group_q = np.nan
+        df_temp["perc_OxM"] = pd.Series(group_m)
         df_temp["perc_DeamN"] = pd.Series(group_n)
         df_temp["perc_DeamQ"] = pd.Series(group_q)
         df_temp[groupby_] = name
         df_list.append(df_temp)
     dfm = pd.concat(df_list)
-    dfm = pd.melt(dfm, id_vars=[groupby_], value_vars=["perc_DeamN", "perc_DeamQ"], var_name="N_Q", value_name="percDeam")
-    dfm.loc[dfm["N_Q"] == "perc_DeamN", "N_Q"] = "N"
-    dfm.loc[dfm["N_Q"] == "perc_DeamQ", "N_Q"] = "Q"
+    dfm = pd.melt(dfm, id_vars=[groupby_], value_vars=["perc_OxM", "perc_DeamN", "perc_DeamQ"], var_name="MNQ", value_name="percDeam")
+    dfm.loc[dfm["MNQ"] == "perc_OxM", "MNQ"] = "M"
+    dfm.loc[dfm["MNQ"] == "perc_DeamN", "MNQ"] = "N"
+    dfm.loc[dfm["MNQ"] == "perc_DeamQ", "MNQ"] = "Q"
     return dfm
 
 def deam_per_RawFile_returnBootstrappedVals_bootstrapPeptidesPerProtein(df, mqc, colname_proteins="Leading razor protein", num_bootstraps=1000, groupby_="Raw file", mean_or_median="mean"):
@@ -354,13 +369,14 @@ def deam_per_RawFile_returnBootstrappedVals_bootstrapPeptidesPerProtein(df, mqc,
             ### sanity check
             cond = dft.index == random_index
             assert cond.all() == True
-            df_deam_per_protein = dft.groupby(colname_proteins)[["perc_DeamN", "perc_DeamQ"]].agg(mean_or_median).reset_index()
+            df_deam_per_protein = dft.groupby(colname_proteins)[["perc_OxM", "perc_DeamN", "perc_DeamQ"]].agg(mean_or_median).reset_index()
             df_deam_per_protein[groupby_] = name
             df_list.append(df_deam_per_protein)
     dfm = pd.concat(df_list)
-    dfm = pd.melt(dfm, id_vars=[groupby_, colname_proteins], value_vars=["perc_DeamN", "perc_DeamQ"], var_name="N_Q", value_name="percDeam")
-    dfm.loc[dfm["N_Q"] == "perc_DeamN", "N_Q"] = "N"
-    dfm.loc[dfm["N_Q"] == "perc_DeamQ", "N_Q"] = "Q"
+    dfm = pd.melt(dfm, id_vars=[groupby_, colname_proteins], value_vars=["perc_OxM", "perc_DeamN", "perc_DeamQ"], var_name="MNQ", value_name="percDeam")
+    dfm.loc[dfm["MNQ"] == "perc_OxM", "MNQ"] = "M"
+    dfm.loc[dfm["MNQ"] == "perc_DeamN", "MNQ"] = "N"
+    dfm.loc[dfm["MNQ"] == "perc_DeamQ", "MNQ"] = "Q"
     return dfm
 
 def number_of_N_Q_peptides_with_DeamPerc(df, colname_RawFile, fn_out):
@@ -373,19 +389,22 @@ def number_of_N_Q_peptides_with_DeamPerc(df, colname_RawFile, fn_out):
     # # calc deamidation per RawFile, Sequence and Charge
     # df = df.groupby(by=[colname_RawFile, "Sequence", "Charge"], axis=0).apply(percent_deamidation, abundance_colname)
 
-    grouped = df[[colname_RawFile, "perc_DeamN", "perc_DeamQ"]].groupby(colname_RawFile)
+    grouped = df[[colname_RawFile, "perc_OxM", "perc_DeamN", "perc_DeamQ"]].groupby(colname_RawFile)
     for name, group in grouped:
-        ser = group[["perc_DeamN", "perc_DeamQ"]].apply(lambda df: sum(df.notnull()))
+        ser = group[["perc_OxM", "perc_DeamN", "perc_DeamQ"]].apply(lambda df: sum(df.notnull()))
         ### doesn't work on groupED object but on group: grouped[["perc_DeamN", "perc_DeamQ"]].apply(lambda df: sum(df.notnull()))
         ser.name = name
         ser_list.append(ser)
     df = pd.concat(ser_list, axis=1).T
     df = df.reset_index()
-    df.columns = [colname_RawFile, "num_N_peptides", "num_Q_peptides"]
-    dfm = df.melt(id_vars=[colname_RawFile], value_vars=["num_N_peptides", "num_Q_peptides"], var_name="N_Q", value_name="num_peptides")
-    cond_n = dfm["N_Q"] == "num_N_peptides"
-    dfm.loc[cond_n, "N_Q"] = "N"
-    dfm.loc[-cond_n, "N_Q"] = "Q"
+    df.columns = [colname_RawFile, "num_M_peptides", "num_N_peptides", "num_Q_peptides"]
+    dfm = df.melt(id_vars=[colname_RawFile], value_vars=["num_M_peptides", "num_N_peptides", "num_Q_peptides"], var_name="MNQ", value_name="num_peptides")
+    cond_m = dfm["MNQ"] == "num_M_peptides"
+    cond_n = dfm["MNQ"] == "num_N_peptides"
+    cond_q = dfm["MNQ"] == "num_Q_peptides"
+    dfm.loc[cond_m, "MNQ"] = "M"
+    dfm.loc[cond_n, "MNQ"] = "N"
+    dfm.loc[cond_q, "MNQ"] = "Q"
     print("Writing results to: {}".format(fn_out))
     dfm.to_csv(fn_out, sep='\t', header=True, index=False)
     return dfm
@@ -395,19 +414,22 @@ def number_of_N_Q_peptides_with_DeamPerc_per_Protein(df, colname_RawFile, colnam
     number of Peptides for which a deamidation percentage exists, and that can therefore be used for bootstrapping.
     """
     ser_list = []
-    grouped = df[[colname_RawFile, colname_proteins, "perc_DeamN", "perc_DeamQ"]].groupby([colname_RawFile, colname_proteins])
+    grouped = df[[colname_RawFile, colname_proteins, "perc_OxM", "perc_DeamN", "perc_DeamQ"]].groupby([colname_RawFile, colname_proteins])
     for name, group in grouped:
-        ser = group[["perc_DeamN", "perc_DeamQ"]].apply(lambda df: sum(df.notnull()))
+        ser = group[["perc_OxM", "perc_DeamN", "perc_DeamQ"]].apply(lambda df: sum(df.notnull()))
         ### doesn't work on groupED object but on group: grouped[["perc_DeamN", "perc_DeamQ"]].apply(lambda df: sum(df.notnull()))
         ser.name = name
         ser_list.append(ser)
     df = pd.concat(ser_list, axis=1).T
     df = df.reset_index()
-    df.columns = [colname_RawFile, colname_proteins, "num_N_peptides", "num_Q_peptides"]
-    dfm = df.melt(id_vars=[colname_RawFile, colname_proteins], value_vars=["num_N_peptides", "num_Q_peptides"], var_name="N_Q", value_name="num_peptides")
-    cond_n = dfm["N_Q"] == "num_N_peptides"
-    dfm.loc[cond_n, "N_Q"] = "N"
-    dfm.loc[-cond_n, "N_Q"] = "Q"
+    df.columns = [colname_RawFile, colname_proteins, "num_M_peptides", "num_N_peptides", "num_Q_peptides"]
+    dfm = df.melt(id_vars=[colname_RawFile, colname_proteins], value_vars=["num_M_peptides", "num_N_peptides", "num_Q_peptides"], var_name="MNQ", value_name="num_peptides")
+    cond_m = dfm["MNQ"] == "num_M_peptides"
+    cond_n = dfm["MNQ"] == "num_N_peptides"
+    cond_q = dfm["MNQ"] == "num_Q_peptides"
+    dfm.loc[cond_m, "MNQ"] = "M"
+    dfm.loc[cond_n, "MNQ"] = "N"
+    dfm.loc[cond_q, "MNQ"] = "Q"
     print("Writing results to: {}".format(fn_out))
     dfm.to_csv(fn_out, sep='\t', header=True, index=False)
     return dfm
@@ -418,26 +440,26 @@ def calculate_mean_and_CIs(df, ci, groupby_, fn_out):
     ci_low = int((100 - ci) / 2.0)
     ci_up = int(ci + ci_low)
 
-    percentile_low = df.groupby([groupby_, "N_Q"])["percDeam"].apply(np.percentile, ci_low).reset_index()
+    percentile_low = df.groupby([groupby_, "MNQ"])["percDeam"].apply(np.percentile, ci_low).reset_index()
     percentile_low = percentile_low.rename(columns={"percDeam": "CI_low"})
-    percentile_up = df.groupby([groupby_, "N_Q"])["percDeam"].apply(np.percentile, ci_up).reset_index()
+    percentile_up = df.groupby([groupby_, "MNQ"])["percDeam"].apply(np.percentile, ci_up).reset_index()
     percentile_up = percentile_up.rename(columns={"percDeam": "CI_up"})
     df_ci = pd.merge(percentile_low, percentile_up, how='outer')
 
-    dfx = df.groupby([groupby_, "N_Q"])["percDeam"].agg(["mean", "std"]).reset_index()
+    dfx = df.groupby([groupby_, "MNQ"])["percDeam"].agg(["mean", "std"]).reset_index()
     df = pd.merge(dfx, df_ci, how='outer')
     df.to_csv(fn_out, sep='\t', header=True, index=False)
 
 def calculate_mean_and_CIs_proteins(df, ci, groupby_, colname_proteins, fn_out):
     ci_low = int((100 - ci) / 2.0)
     ci_up = int(ci + ci_low)
-    percentile_low = df.groupby([groupby_, colname_proteins, "N_Q"])["percDeam"].apply(np.percentile, ci_low).reset_index()
+    percentile_low = df.groupby([groupby_, colname_proteins, "MNQ"])["percDeam"].apply(np.percentile, ci_low).reset_index()
     percentile_low = percentile_low.rename(columns={"percDeam": "CI_low"})
-    percentile_up = df.groupby([groupby_, colname_proteins, "N_Q"])["percDeam"].apply(np.percentile, ci_up).reset_index()
+    percentile_up = df.groupby([groupby_, colname_proteins, "MNQ"])["percDeam"].apply(np.percentile, ci_up).reset_index()
     percentile_up = percentile_up.rename(columns={"percDeam": "CI_up"})
     df_ci = pd.merge(percentile_low, percentile_up, how='outer')
 
-    dfx = df.groupby([groupby_, colname_proteins, "N_Q"])["percDeam"].agg(["mean", "std"]).reset_index()
+    dfx = df.groupby([groupby_, colname_proteins, "MNQ"])["percDeam"].agg(["mean", "std"]).reset_index()
     df = pd.merge(dfx, df_ci, how='outer')
     df.to_csv(fn_out, sep='\t', header=True, index=False)
     return df
@@ -495,4 +517,3 @@ if __name__ == '__main__':
             print(arg, ": ", getattr(args, arg))
         print("#" * 80)
     run(fn_evidence, abundance_colname, ci, sampling, num_bootstraps, output_dir, colname_proteins, protein_bootstraps)
-
